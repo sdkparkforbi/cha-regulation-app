@@ -9,6 +9,7 @@ import os
 import re
 import streamlit as st
 from openai import OpenAI
+from hwpml_exporter import HwpmlExporter
 
 # ============================================================
 # 설정
@@ -280,7 +281,7 @@ def apply_custom_css():
 # ============================================================
 def page_search(regulations, search_index):
     st.markdown("### 🔍 규정 검색")
-    st.caption("키워드로 124개 규정을 검색하고, GPT가 관련 조문을 분석합니다.")
+    st.caption("키워드로 136개 규정을 검색하고, GPT가 관련 조문을 분석합니다.")
 
     query = st.text_input(
         "검색어를 입력하세요",
@@ -308,6 +309,27 @@ def page_search(regulations, search_index):
                     analysis = gpt_analyze_regulations(query, results)
                     with st.expander("🤖 GPT 분석 결과", expanded=True):
                         st.markdown(analysis)
+                        
+                        # XML 다운로드 버튼
+                        exporter = HwpmlExporter()
+                        reg_info = [
+                            {"name": r["regulation"]["name"], 
+                             "article_count": r["regulation"]["article_count"],
+                             "score": r["score"]}
+                            for r in results[:5]
+                        ]
+                        xml_bytes = exporter.create_analysis_doc(
+                            title=f"규정 분석: {query}",
+                            query=query,
+                            analysis_text=analysis,
+                            regulations=reg_info,
+                        )
+                        st.download_button(
+                            "📥 분석 결과 XML 다운로드 (한/글 호환)",
+                            data=xml_bytes,
+                            file_name=f"규정분석_{query[:20]}.xml",
+                            mime="application/xml",
+                        )
                 except Exception as e:
                     st.error(f"GPT 분석 실패: {e}")
 
@@ -401,6 +423,34 @@ def page_amendment(regulations, search_index):
                     draft = gpt_draft_amendment(reg, relevant_articles, idea)
                     st.markdown(f"#### 📄 {reg['name']} 개정안")
                     st.markdown(draft)
+                    
+                    # XML 다운로드 버튼
+                    exporter = HwpmlExporter()
+                    amendment_rows = exporter.parse_gpt_amendment(draft)
+                    if not amendment_rows:
+                        amendment_rows = [{"current": "(GPT 생성 텍스트)", "revised": draft}]
+                    
+                    metadata = {
+                        "background": f"CHA대학교 AI중심대학 사업 추진에 따른 {reg['name']} 정비",
+                        "core_content": idea[:100],
+                        "related_regs": ", ".join(n.split(" (")[0] for n in selected_names),
+                        "department": reg.get("dept", ""),
+                        "cooperating": "교무처, 정보전산원, 산학협력단",
+                        "schedule": "2026.03 ~ 2026.06 (약 12주)",
+                        "target": "2026년 2학기부터 적용",
+                    }
+                    xml_bytes = exporter.create_amendment_doc(
+                        title=f"{reg['name']} 개정안",
+                        amendment_rows=amendment_rows,
+                        metadata=metadata,
+                    )
+                    st.download_button(
+                        f"📥 {reg['name']} 개정안 XML 다운로드 (한/글 호환)",
+                        data=xml_bytes,
+                        file_name=f"{reg['name']}_개정안.xml",
+                        mime="application/xml",
+                        key=f"dl_{reg['id']}",
+                    )
                     st.divider()
                 except Exception as e:
                     st.error(f"개정안 생성 실패 ({reg['name']}): {e}")
@@ -454,6 +504,26 @@ def page_chat(regulations):
         # 히스토리 저장
         st.session_state[chat_key].append({"role": "user", "content": prompt})
         st.session_state[chat_key].append({"role": "assistant", "content": response})
+
+    # Q&A 기록 다운로드
+    if st.session_state.get(chat_key):
+        qa_pairs = []
+        msgs = st.session_state[chat_key]
+        for i in range(0, len(msgs) - 1, 2):
+            if msgs[i]["role"] == "user" and msgs[i + 1]["role"] == "assistant":
+                qa_pairs.append({
+                    "question": msgs[i]["content"],
+                    "answer": msgs[i + 1]["content"],
+                })
+        if qa_pairs:
+            exporter = HwpmlExporter()
+            xml_bytes = exporter.create_qa_doc(selected_name, qa_pairs)
+            st.download_button(
+                "📥 Q&A 기록 XML 다운로드 (한/글 호환)",
+                data=xml_bytes,
+                file_name=f"{selected_name}_QA기록.xml",
+                mime="application/xml",
+            )
 
 
 # ============================================================
